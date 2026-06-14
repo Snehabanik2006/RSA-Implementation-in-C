@@ -1,0 +1,720 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#define MAX 256
+typedef struct {
+    unsigned char digits[MAX];
+    int length;
+    int sign; 
+} signed_bigint;
+
+void bigint_rshift1(const signed_bigint *src, signed_bigint *dst);
+signed_bigint inverse_result;
+void string_to_bigint(const char *msg, signed_bigint *num)
+{
+    int i = 0;
+
+    while (msg[i] != '\0')
+        i++;
+
+    num->length = i;
+    num->sign = 1;
+
+    // store in little-endian
+    for (int j = 0; j < i; j++)
+    {
+        num->digits[j] = (unsigned char)msg[i - 1 - j];
+    }
+}
+void bigint_to_string(const signed_bigint *num, char *msg)
+{
+    for (int i = 0; i < num->length; i++)
+    {
+        msg[i] = (char)num->digits[num->length - 1 - i];
+    }
+
+    msg[num->length] = '\0';
+}
+void bigint_set_zero(signed_bigint *a)
+{
+    for (int i = 0; i < MAX; i++) {
+        a->digits[i] = 0;
+    }
+
+    a->length = 0;
+    a->sign = 0;
+}
+
+
+void bigint_set_one(signed_bigint *a) {
+    a->digits[0] = 1;
+    for (int i = 1; i < MAX; i++) {
+        a->digits[i] = 0;
+    }
+    a->length=1;
+    a->sign = 1; 
+}
+
+void bigint_copy(signed_bigint *dest,
+                 const signed_bigint *src)
+{
+
+    for (int i = 0; i < src->length; i++) {
+        dest->digits[i] = src->digits[i];
+    }
+
+
+    for (int i = src->length; i < MAX; i++) {
+        dest->digits[i] = 0;
+    }
+
+
+    dest->length = src->length;
+    dest->sign   = src->sign;
+}
+
+
+int bigint_is_zero(const signed_bigint *a)
+{
+    return (a->length == 0);
+}
+
+int bigint_is_one(const signed_bigint *a)
+{
+    return (a->length == 1 &&
+            a->digits[0] == 1 &&
+            a->sign == 1);
+}
+
+int bigint_is_odd(const signed_bigint *a) {
+    if (a->length == 0) return 0;
+    return (a->digits[0] & 1);
+}
+
+
+int compare_abs(const signed_bigint *a, 
+                const signed_bigint *b)
+{
+
+    if (a->length > b->length) return 1;
+    if (a->length < b->length) return -1;
+
+
+    for (int i = a->length -1; i >= 0; i--) {
+        if (a->digits[i] > b->digits[i]) return 1;
+        if (a->digits[i] < b->digits[i]) return -1;
+    }
+
+    return 0; 
+}
+
+
+
+void add_abs(const signed_bigint *a,
+             const signed_bigint *b,
+             signed_bigint *result)
+{
+    unsigned short carry = 0;
+    unsigned short sum;
+    int i = 0;
+
+    int max_len = (a->length > b->length) ? a->length : b->length;
+
+    for (i = 0; i < max_len; i++) {
+        unsigned short da = (i < a->length) ? a->digits[i] : 0;
+        unsigned short db = (i < b->length) ? b->digits[i] : 0;
+
+        sum = da + db + carry;
+        result->digits[i] = sum % 256;
+        carry = sum / 256;
+    }
+
+    if (carry && i < MAX) {
+        result->digits[i] = carry;
+        i++;
+    }
+
+    result->length = i;
+    result->sign = (result->length == 0) ? 0 : 1;
+
+
+    for (; i < MAX; i++) {
+        result->digits[i] = 0;
+    }
+}
+
+
+
+
+void subtract_abs(const signed_bigint *a,
+                  const signed_bigint *b,
+                  signed_bigint *result)
+{
+    int borrow = 0;
+    int val;
+    int i;
+
+
+    for (i = 0; i < a->length; i++) {
+        int da = a->digits[i];
+        int db = (i < b->length) ? b->digits[i] : 0;
+
+        val = da - db - borrow;
+
+        if (val < 0) {
+            val += 256;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+
+        result->digits[i] = val;
+    }
+
+
+    int new_len = a->length;
+    while (new_len > 0 && result->digits[new_len - 1] == 0) {
+        new_len--;
+    }
+
+    result->length = new_len;
+    result->sign = (new_len == 0) ? 0 : 1;
+
+
+    for (i = new_len; i < MAX; i++) {
+        result->digits[i] = 0;
+    }
+}
+
+
+
+
+
+void bigint_add(const signed_bigint *a,
+                const signed_bigint *b,
+                signed_bigint *result)
+{
+    if (bigint_is_zero(a)) {
+        bigint_copy(result, b);
+        return;
+    }
+
+    if (bigint_is_zero(b)) {
+        bigint_copy(result, a);
+        return;
+    }
+
+    if (a->sign == b->sign) {
+        add_abs(a, b, result);
+        result->sign = a->sign;
+    }
+    else {
+        int cmp = compare_abs(a, b);
+
+        if (cmp == 0) {
+            bigint_set_zero(result);
+            return;
+        }
+        else if (cmp > 0) {
+            subtract_abs(a, b, result);
+            result->sign = a->sign;
+        }
+        else {
+            subtract_abs(b, a, result);
+            result->sign = b->sign;
+        }
+    }
+
+
+    if (result->length == 0) {
+        result->sign = 0;
+    }
+}
+
+
+void bigint_subtract(const signed_bigint *a,
+                     const signed_bigint *b,
+                     signed_bigint *result)
+{
+    signed_bigint neg_b;
+
+    bigint_copy(&neg_b, b);
+
+    if (!bigint_is_zero(b)) {
+        neg_b.sign = -b->sign;
+    }
+
+    bigint_add(a, &neg_b, result);
+}
+
+
+
+void multiply_by_digit(const signed_bigint *a,
+                       unsigned char digit,
+                       signed_bigint *result)
+{
+    if (digit == 0 || a->length == 0) {
+        bigint_set_zero(result);
+        return;
+    }
+
+    unsigned short carry = 0;
+
+    for (int i = 0; i < a->length; i++) {
+        unsigned short prod = a->digits[i] * digit + carry;
+        result->digits[i] = prod % 256;
+        carry = prod / 256;
+    }
+
+    int res_len = a->length;
+
+    if (carry > 0) {
+        result->digits[res_len] = carry;
+        res_len++;
+    }
+
+
+    for (int i = res_len; i < MAX; i++) {
+        result->digits[i] = 0;
+    }
+
+    result->length = res_len;
+    result->sign   = a->sign;
+}
+
+void bigint_div_mod(const signed_bigint *dividend,
+                    const signed_bigint *divisor,
+                    signed_bigint *quotient,
+                    signed_bigint *remainder)
+{
+    if (bigint_is_zero(divisor)) return;
+
+    bigint_set_zero(quotient);
+    bigint_copy(remainder, dividend);
+    remainder->sign = 1;
+
+    signed_bigint abs_divisor;
+    bigint_copy(&abs_divisor, divisor);
+    abs_divisor.sign = 1;
+
+    if (compare_abs(remainder, &abs_divisor) < 0) {
+        if (bigint_is_zero(remainder)) remainder->sign = 0;
+        else remainder->sign = 1;
+        return;
+    }
+
+    signed_bigint temp, one;
+    bigint_set_one(&one);
+
+    signed_bigint current_divisor, current_q;
+    bigint_copy(&current_divisor, &abs_divisor);
+    bigint_copy(&current_q, &one);
+
+    while (compare_abs(remainder, &current_divisor) >= 0) {
+        bigint_add(&current_divisor, &current_divisor, &temp);
+        if (compare_abs(&temp, remainder) > 0) break;
+        bigint_copy(&current_divisor, &temp);
+
+        bigint_add(&current_q, &current_q, &temp);
+        bigint_copy(&current_q, &temp);
+    }
+
+    while (compare_abs(remainder, &abs_divisor) >= 0) {
+        if (compare_abs(remainder, &current_divisor) >= 0) {
+            subtract_abs(remainder, &current_divisor, &temp);
+            bigint_copy(remainder, &temp);
+            bigint_add(quotient, &current_q, &temp);
+            bigint_copy(quotient, &temp);
+        }
+        bigint_rshift1(&current_divisor, &temp);
+        bigint_copy(&current_divisor, &temp);
+        bigint_rshift1(&current_q, &temp);
+        bigint_copy(&current_q, &temp);
+        if (bigint_is_zero(&current_q)) break;
+    }
+
+    if (!bigint_is_zero(quotient)) {
+        quotient->sign = (dividend->sign == divisor->sign) ? 1 : -1;
+    }
+    if (bigint_is_zero(remainder)) remainder->sign = 0;
+    else remainder->sign = 1;
+}
+void bigint_multiply(const signed_bigint *a,
+                     const signed_bigint *b,
+                     signed_bigint *result)
+{
+
+    if (bigint_is_zero(a) || bigint_is_zero(b)) {
+        bigint_set_zero(result);
+        return;
+    }
+
+
+    bigint_set_zero(result);
+
+    signed_bigint temp;
+    signed_bigint shifted;
+
+
+    for (int i = 0; i < b->length; i++) {
+
+
+        multiply_by_digit(a, b->digits[i], &temp);
+
+        if (temp.length == 0)
+            continue;
+        bigint_set_zero(&shifted); 
+
+        for (int k = 0; k < i; k++) {
+            shifted.digits[k] = 0;
+        }
+
+        for (int k = 0; k < temp.length; k++) {
+            shifted.digits[k + i] = temp.digits[k];
+        }
+
+        shifted.length = temp.length + i;
+        shifted.sign = 1;
+
+        for (int k = shifted.length; k < MAX; k++) {
+            shifted.digits[k] = 0;
+        }
+
+
+        bigint_add(result, &shifted, &temp);
+        bigint_copy(result, &temp);
+    }
+
+
+    result->sign = (a->sign == b->sign) ? 1 : -1;
+}
+void bigint_rshift1(const signed_bigint *src, signed_bigint *dst)
+{
+    if (src->length == 0) {
+        bigint_set_zero(dst);
+        return;
+    }
+
+    int carry = 0;
+
+
+    for (int i = src->length - 1; i >= 0; i--) {
+        int cur = carry * 256 + src->digits[i];
+        dst->digits[i] = cur / 2;
+        carry = cur % 2;
+    }
+
+
+    int new_len = src->length;
+    while (new_len > 0 && dst->digits[new_len - 1] == 0) {
+        new_len--;
+    }
+
+    dst->length = new_len;
+
+
+    for (int i = new_len; i < MAX; i++) {
+        dst->digits[i] = 0;
+    }
+
+    /* sign handling */
+    if (new_len == 0) {
+        dst->sign = 0;
+    } else {
+        dst->sign = src->sign;
+    }
+}
+
+
+
+
+void print_bigint(const signed_bigint *a) {
+    if (a->sign < 0) printf("-");
+
+    for (int i = a->length - 1; i >= 0; i--) {
+        printf("%hhu ", a->digits[i]);
+    }
+}
+int modexp(const signed_bigint *a,
+           const signed_bigint *e,
+           const signed_bigint *m,
+           signed_bigint *result)
+{
+    signed_bigint base, exp, temp, rem, q;
+    signed_bigint one;
+
+    bigint_copy(&exp, e);
+
+
+    bigint_div_mod(a, m, &q, &rem);
+    bigint_copy(&base, &rem);
+
+    bigint_set_one(&one);
+    bigint_set_one(result);
+
+    while (!bigint_is_zero(&exp)) {
+
+        if (bigint_is_odd(&exp)) {
+            bigint_multiply(result, &base, &temp);
+            bigint_div_mod(&temp, m, &q, &rem);
+            bigint_copy(result, &rem);
+        }
+
+        bigint_multiply(&base, &base, &temp);
+        bigint_div_mod(&temp, m, &q, &rem);
+        bigint_copy(&base, &rem);
+
+        bigint_rshift1(&exp, &temp);
+        bigint_copy(&exp, &temp);
+    }
+
+    return 0;
+}
+
+void convert_to_signed(const unsigned char *src, signed_bigint *dest)
+{
+    int len = dest->length;   
+
+    for (int i = 0; i < len; i++)
+        dest->digits[i] = src[i];
+
+    for (int i = len; i < MAX; i++)
+        dest->digits[i] = 0;
+
+    if (len == 0)
+        dest->sign = 0;
+    else
+        dest->sign = 1;
+}
+void random1024bit_bigint(signed_bigint *p, int bytes){
+    for(int i=0; i<bytes;i++){
+        p->digits[i]=rand()%256;
+    }
+    p->digits[0] |=1;
+    p->digits[bytes-1]|= 0x80;
+    p->length=bytes;
+    p->sign=1;
+}
+
+void random_bigint(signed_bigint *x, int len) {
+    do {
+        for (int i = 0; i < len; i++) {
+            x->digits[i] = rand() % 256;
+        }
+        int i = len - 1;
+        while (i > 0 && x->digits[i] == 0)
+            i--;
+
+        x->length = i + 1;
+        x->sign = 1;
+
+    } while (x->length == 1 && x->digits[0] <= 1); 
+}int MillerRabin(const signed_bigint *n, signed_bigint *result, int k)
+{
+    bigint_set_zero(result);
+
+signed_bigint u,b0,b1,rtemp,temp,mtemp,nminus1,nminus3,one,two;
+signed_bigint a,qtemp;
+
+for (int round = 0; round < k; round++) {
+
+        int r = 0;
+
+        bigint_set_one(&one);
+
+        bigint_set_zero(&two);
+        two.digits[0] = 2;
+        two.length = 1;
+        two.sign = 1;
+
+        if (compare_abs(n, &two) < 0) return 0;
+        if (compare_abs(n, &two) == 0) return 1;
+        if (!bigint_is_odd(n)) return 0;
+
+        bigint_subtract(n, &one, &u);  
+
+        bigint_copy(&nminus1, &u);
+
+        bigint_subtract(&nminus1, &two, &nminus3);
+
+        random_bigint(&rtemp, nminus3.length);
+        bigint_div_mod(&rtemp, &nminus3, &qtemp, &mtemp);
+        bigint_copy(&rtemp, &mtemp);
+        bigint_add(&rtemp, &two, &a);
+
+        while (!bigint_is_odd(&u) && !bigint_is_zero(&u)) {
+            bigint_rshift1(&u, &temp);
+            bigint_copy(&u, &temp);
+            r++;
+        }
+
+        modexp(&a, &u, n, &b0);
+
+        if (compare_abs(&b0, &one) == 0 || compare_abs(&b0, &nminus1) == 0)
+            continue;
+
+        int witness = 1;
+
+        for (int i = 1; i < r; i++) {
+
+            modexp(&b0, &two, n, &b1);
+
+            if (compare_abs(&b1, &nminus1) == 0) {
+                witness = 0;
+                break;
+            }
+
+            if (compare_abs(&b1, &one) == 0){
+            bigint_set_zero(result);
+                return 0;}
+
+            bigint_copy(&b0, &b1);
+        }
+
+        if (witness){
+
+        bigint_set_zero(result);
+            return 0;}
+    }
+    bigint_set_one(result);
+    return 1;
+}
+
+int modular_inverse(const signed_bigint *a, const signed_bigint *m) {
+    signed_bigint r0, r1, t0, t1, q, temp, prod;
+
+
+    bigint_copy(&r0, m);
+    bigint_copy(&r1, a);
+    bigint_set_zero(&t0);
+    bigint_set_one(&t1);
+
+    while (!bigint_is_zero(&r1)) {
+        bigint_div_mod(&r0, &r1, &q, &temp);
+
+
+        bigint_copy(&r0, &r1);
+        bigint_copy(&r1, &temp);
+
+
+        bigint_multiply(&q, &t1, &prod);
+        bigint_subtract(&t0, &prod, &temp);
+
+
+        bigint_copy(&t0, &t1);
+        bigint_copy(&t1, &temp);
+    }
+
+
+    if (!bigint_is_one(&r0)) {
+        return 0; 
+    }
+
+
+    if (t0.sign < 0) {
+        bigint_add(&t0, m, &inverse_result);
+    } else {
+        bigint_copy(&inverse_result, &t0);
+    }
+
+    return 1;
+}
+void set_e_65537(signed_bigint *e)
+{
+    bigint_set_zero(e);
+
+    e->digits[0] = 1;
+    e->digits[1] = 0;
+    e->digits[2] = 1;
+
+    e->length = 3;
+    e->sign = 1;
+}
+int main() {
+    srand(time(NULL));
+    signed_bigint message, cipher, decrypted;
+    char msg[256];
+    int len = 0;
+    signed_bigint a, b, n, phi_n,dum_q;
+    signed_bigint e, e_coprime;
+    signed_bigint a_minus_one, b_minus_one;
+    signed_bigint result_a, result_b;
+    signed_bigint one;
+
+    bigint_set_one(&one);
+
+    /*Generate prime b */
+    do {
+        random1024bit_bigint(&b, 16); // Use more bytes for a larger n
+        MillerRabin(&b, &result_b, 40);
+    } while (compare_abs(&result_b, &one) != 0);
+    /*Generate prime a*/
+    do {
+        random1024bit_bigint(&a, 16);
+        MillerRabin(&a, &result_a, 40);
+    } while (compare_abs(&result_a, &one) != 0);
+    /*Compute n = a * b */
+    bigint_multiply(&a, &b, &n);
+
+    /*Compute φ(n)*/
+    bigint_subtract(&a, &one, &a_minus_one);
+    bigint_subtract(&b, &one, &b_minus_one);
+    bigint_multiply(&a_minus_one, &b_minus_one, &phi_n);
+    set_e_65537(&e_coprime);
+    modular_inverse(&e_coprime, &phi_n);
+    printf("\nRSA KEYS :\n");
+
+    printf("\nPublic Key (n, e):\n");
+    print_bigint(&n);
+    printf("\n");
+    print_bigint(&e_coprime);
+
+    printf("\n\nPrivate Key (a,b,phi_n,n,e, d):\n");
+    print_bigint(&a);
+    printf("\n");
+    print_bigint(&b);
+    printf("\n");
+    print_bigint(&phi_n);
+    printf("\n");
+    print_bigint(&n);
+    printf("\n");
+    print_bigint(&e_coprime);
+    printf("\n");
+    print_bigint(&inverse_result);
+
+    printf("\n==============================\n");
+
+        printf("\nEnter message (single word, max 255 chars): ");
+scanf("%255s", msg);
+    while (msg[len] != '\0')
+    len++;
+    message.length = len;
+message.sign = 1;
+
+for (int i = 0; i < len; i++)
+    message.digits[i] = (unsigned char)msg[len - 1 - i];
+
+    if (compare_abs(&message, &n) >= 0) {
+    printf("Message too large for this key!\n");
+    return 0;
+}printf("message.length = %d\n", message.length);
+printf("Starting encryption...\n");
+modexp(&message, &e_coprime, &n, &cipher);
+printf("Encryption done\n");
+printf("\nEncrypted message:\n");
+print_bigint(&cipher);
+printf("\n");
+modexp(&cipher, &inverse_result, &n, &decrypted);
+
+printf("\nDecrypted bigint:\n");
+print_bigint(&decrypted);
+printf("\n");
+printf("\nDecrypted text:\n");
+
+for (int i = decrypted.length - 1; i >= 0; i--)
+    printf("%c", decrypted.digits[i]);
+
+printf("\n");
+    return 0;
+}
